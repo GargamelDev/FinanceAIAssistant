@@ -122,6 +122,12 @@ public class FinanceController(IOpenAIService openAIService, ICsvService csvServ
     {
         return Ok(_transactions);
     }
+
+    [HttpGet("test")]
+    public IActionResult Test()
+    {
+        return Ok("test ok");
+    }
 }
 
 public class ChatRequest
