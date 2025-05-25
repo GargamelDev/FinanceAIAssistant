@@ -6,17 +6,9 @@ namespace FinanceChatApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class FinanceController : ControllerBase
+public class FinanceController(IOpenAIService openAIService, ICsvService csvService) : ControllerBase
 {
-    private readonly OpenAIService _openAIService;
-    private readonly CsvService _csvService;
     private static List<Transaction> _transactions = new();
-
-    public FinanceController(OpenAIService openAIService, CsvService csvService)
-    {
-        _openAIService = openAIService;
-        _csvService = csvService;
-    }
 
     [HttpPost("chat")]
     public async Task<IActionResult> Chat([FromBody] ChatRequest request)
@@ -28,7 +20,7 @@ public class FinanceController : ControllerBase
 
         try
         {
-            var response = await _openAIService.GetChatCompletionAsync(request.Messages, request.IncludeTransactions ? _transactions : null);
+            var response = await openAIService.GetChatCompletionAsync(request.Messages, request.IncludeTransactions ? _transactions : null);
             return Ok(new { content = response });
         }
         catch (Exception ex)
@@ -45,7 +37,7 @@ public class FinanceController : ControllerBase
 
         try
         {
-            var transactions = await _csvService.ParseTransactionsAsync(file);
+            var transactions = await csvService.ParseTransactionsAsync(file);
             _transactions = transactions;
             return Ok(transactions);
         }
@@ -69,7 +61,7 @@ public class FinanceController : ControllerBase
                 return NotFound("Transaction not found");
             }
 
-            var categoryAssignment = await _openAIService.AssignCategoryToTransaction(request.UserInput);
+            var categoryAssignment = await openAIService.AssignCategoryToTransaction(request.UserInput);
             transaction.AssignedCategory = categoryAssignment.category;
 
             return Ok(new
@@ -89,7 +81,7 @@ public class FinanceController : ControllerBase
     {
         foreach (var transaction in _transactions.Where(x => String.IsNullOrEmpty(x.AssignedCategory)).Take(10))
         {
-            var categoryAssignment = await _openAIService.AssignCategoryToTransaction(transaction.OperationDescription);
+            var categoryAssignment = await openAIService.AssignCategoryToTransaction(transaction.OperationDescription);
             transaction.AssignedCategory = categoryAssignment.category;
             Thread.Sleep(100);
         }
@@ -101,7 +93,7 @@ public class FinanceController : ControllerBase
     {
         try
         {
-            var response = await _openAIService.GetChatCompletionAsync(
+            var response = await openAIService.GetChatCompletionAsync(
                 new List<ChatMessage>
                 {
                     new ChatMessage

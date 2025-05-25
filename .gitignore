@@ -1,0 +1,61 @@
+# .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.dll
+*.exe
+*.pdb
+
+# Visual Studio files
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.dbmdl
+*.dbproj.schemaview
+*.jfm
+*.pfx
+*.publishsettings
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.*~
+project.lock.json
+.DS_Store
+*.pyc
+
+# NuGet
+*.nupkg
+packages/
+*.nuget.props
+*.nuget.targets
+
+# Environment files
+appsettings.*.json
+!appsettings.example.json
+*.env
+.env.*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Build results
+[Dd]ist/
+[Oo]ut/
+
+# Local development configuration
+*.Development.json
+launchSettings.json
+
+# API Keys and Secrets
+**/appsettings.Development.json
+**/appsettings.Production.json 

@@ -1,0 +1,1317 @@
+// ==============================================
+// Backend Models
+// ==============================================
+
+// ChatMessage.cs
+namespace FinanceChatApi.Models;
+
+public class ChatMessage
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+}
+
+// Transaction.cs
+namespace FinanceChatApi.Models;
+
+public class Transaction
+{
+    public string TransactionDate { get; set; } = string.Empty;
+    public string OperationDescription { get; set; } = string.Empty;
+    public string Account { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Amount { get; set; } = string.Empty;
+    public string AssignedCategory { get; set; } = string.Empty;
+}
+
+// ==============================================
+// Backend Controllers
+// ==============================================
+
+// FinanceController.cs
+using Microsoft.AspNetCore.Mvc;
+using FinanceChatApi.Models;
+using FinanceChatApi.Services;
+
+namespace FinanceChatApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class FinanceController : ControllerBase
+{
+    private readonly OpenAIService _openAIService;
+    private readonly CsvService _csvService;
+    private static List<Transaction> _transactions = new();
+
+    public FinanceController(OpenAIService openAIService, CsvService csvService)
+    {
+        _openAIService = openAIService;
+        _csvService = csvService;
+    }
+
+    [HttpPost("chat")]
+    public async Task<IActionResult> Chat([FromBody] ChatRequest request)
+    {
+        if (request == null || request.Messages == null || !request.Messages.Any())
+        {
+            return BadRequest(new { error = "Invalid request format. Please provide messages array." });
+        }
+
+        try
+        {
+            var response = await _openAIService.GetChatCompletionAsync(request.Messages, request.IncludeTransactions ? _transactions : null);
+            return Ok(new { content = response });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("transactions/upload")]
+    public async Task<IActionResult> UploadTransactions(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest("No file uploaded");
+
+        try
+        {
+            var transactions = await _csvService.ParseTransactionsAsync(file);
+            _transactions = transactions;
+            return Ok(transactions);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("transactions/assign-category")]
+    public async Task<IActionResult> AssignCategory([FromBody] CategoryAssignmentRequest request)
+    {
+        try
+        {
+            var transaction = _transactions.FirstOrDefault(t =>
+                t.TransactionDate == request.TransactionDate &&
+                t.OperationDescription == request.OperationDescription);
+
+            if (transaction == null)
+            {
+                return NotFound("Transaction not found");
+            }
+
+            var categoryAssignment = await _openAIService.AssignCategoryToTransaction(request.UserInput);
+            transaction.AssignedCategory = categoryAssignment.category;
+
+            return Ok(new
+            {
+                transaction = transaction,
+                category = categoryAssignment.category
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("transactions/assign")]
+    public async Task<IActionResult> AssignAllCategories()
+    {
+        foreach (var transaction in _transactions.Where(x => String.IsNullOrEmpty(x.AssignedCategory)).Take(10))
+        {
+            var categoryAssignment = await _openAIService.AssignCategoryToTransaction(transaction.OperationDescription);
+            transaction.AssignedCategory = categoryAssignment.category;
+            Thread.Sleep(100);
+        }
+        return Ok(_transactions);
+    }
+
+    [HttpPost("transactions/category-chat")]
+    public async Task<IActionResult> CategoryChat([FromBody] CategoryChatRequest request)
+    {
+        try
+        {
+            var response = await _openAIService.GetChatCompletionAsync(
+                new List<ChatMessage>
+                {
+                    new ChatMessage
+                    {
+                        Role = "system",
+                        Content = "You are a helpful assistant that helps users categorize their transactions. Available categories are: Basic Outcomes, Financial Freedom, Emergency Fund, Education, Kids Education, Pleasures. You can also help split transactions between multiple categories. Keep responses concise and focused on category assignment."
+                    },
+                    new ChatMessage
+                    {
+                        Role = "user",
+                        Content = request.Message
+                    }
+                }
+            );
+
+            return Ok(new { response });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("transactions")]
+    public IActionResult GetTransactions()
+    {
+        return Ok(_transactions);
+    }
+}
+
+public class ChatRequest
+{
+    public List<ChatMessage> Messages { get; set; } = new();
+    public bool IncludeTransactions { get; set; } = true;
+}
+
+public class CategoryAssignmentRequest
+{
+    public string TransactionDate { get; set; } = string.Empty;
+    public string OperationDescription { get; set; } = string.Empty;
+    public string UserInput { get; set; } = string.Empty;
+}
+
+public class CategoryChatRequest
+{
+    public string Message { get; set; } = string.Empty;
+}
+
+// ==============================================
+// Backend Services
+// ==============================================
+
+// CsvService.cs
+using CsvHelper;
+using CsvHelper.Configuration;
+using FinanceChatApi.Models;
+using System.Globalization;
+using System.Text;
+
+namespace FinanceChatApi.Services;
+
+public class CsvService
+{
+    public async Task<List<Transaction>> ParseTransactionsAsync(IFormFile file)
+    {
+        // Read all lines from the file
+        var lines = new List<string>();
+        using (var fileReader = new StreamReader(file.OpenReadStream()))
+        {
+            string? line;
+            while ((line = await fileReader.ReadLineAsync()) != null)
+            {
+                lines.Add(line);
+            }
+        }
+
+        // Find the index of the header row
+        int headerIndex = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Contains("Data operacji"))
+            {
+                headerIndex = i;
+                break;
+            }
+        }
+
+        if (headerIndex == -1)
+        {
+            throw new InvalidOperationException("Could not find transaction headers in the CSV file");
+        }
+
+        // Create a new stream with only the relevant data
+        var csvContent = new StringBuilder();
+        // Remove '#' characters from the header row
+        var headerRow = lines[headerIndex].Replace("#", "");
+        csvContent.AppendLine(headerRow);
+        for (int i = headerIndex + 1; i < lines.Count; i++)
+        {
+            if (!string.IsNullOrWhiteSpace(lines[i]))
+            {
+                csvContent.AppendLine(lines[i]);
+            }
+        }
+
+        using var memoryStream = new MemoryStream(Encoding.UTF8.GetBytes(csvContent.ToString()));
+        using var streamReader = new StreamReader(memoryStream);
+
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            Delimiter = ";",
+            HasHeaderRecord = true,
+            MissingFieldFound = null,
+            HeaderValidated = null
+        };
+
+        using var csv = new CsvReader(streamReader, config);
+        
+        // Register the mapping
+        csv.Context.RegisterClassMap<TransactionMap>();
+
+        // Read the header
+        await csv.ReadAsync();
+        csv.ReadHeader();
+
+        var records = new List<Transaction>();
+        while (await csv.ReadAsync())
+        {
+            var record = new Transaction
+            {
+                TransactionDate = csv.GetField("Data operacji") ?? string.Empty,
+                OperationDescription = csv.GetField("Opis operacji") ?? string.Empty,
+                Account = csv.GetField("Rachunek") ?? string.Empty,
+                Category = csv.GetField("Kategoria") ?? string.Empty,
+                Amount = csv.GetField("Kwota") ?? string.Empty
+            };
+            records.Add(record);
+        }
+
+        return records;
+    }
+}
+
+public sealed class TransactionMap : ClassMap<Transaction>
+{
+    public TransactionMap()
+    {
+        Map(m => m.TransactionDate).Name("Data operacji");
+        Map(m => m.OperationDescription).Name("Opis operacji");
+        Map(m => m.Account).Name("Rachunek");
+        Map(m => m.Category).Name("Kategoria");
+        Map(m => m.Amount).Name("Kwota");
+    }
+}
+
+// OpenAIService.cs
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using OpenAI.ObjectModels.RequestModels;
+using OpenAI.ObjectModels.ResponseModels;
+using OpenAI.Interfaces;
+using OpenAI.ObjectModels;
+using OpenAI.Extensions;
+using FinanceChatApi.Models;
+using FinanceChatApi.Prompts;
+using ChatMessage = OpenAI.ObjectModels.RequestModels.ChatMessage;
+
+namespace FinanceChatApi.Services;
+
+public class OpenAIService
+{
+    private readonly IOpenAIService _openAIService;
+
+    public OpenAIService(IConfiguration configuration)
+    {
+        var apiKey = configuration["OpenAI:ApiKey"] ?? throw new ArgumentNullException("OpenAI:ApiKey");
+        _openAIService = new OpenAI.Managers.OpenAIService(new OpenAI.OpenAiOptions() { ApiKey = apiKey });
+    }
+
+    public async Task<string> GetChatCompletionAsync(List<FinanceChatApi.Models.ChatMessage> messages, List<Transaction>? transactions = null)
+    {
+        var chatMessages = new List<ChatMessage>();
+
+        // Add system message with transaction context if available
+        if (transactions != null && transactions.Any())
+        {
+            var transactionContext = $"You have access to the following transactions:\n{string.Join("\n", transactions.Select(t => $"- {t.OperationDescription}: {t.Amount} PLN ({t.Category})"))}";
+            chatMessages.Add(new ChatMessage(StaticValues.ChatMessageRoles.System, transactionContext));
+        }
+
+        // Add user messages
+        chatMessages.AddRange(messages.Select(m => new ChatMessage(
+            m.Role.ToLower() switch
+            {
+                "user" => StaticValues.ChatMessageRoles.User,
+                "assistant" => StaticValues.ChatMessageRoles.Assistant,
+                "system" => StaticValues.ChatMessageRoles.System,
+                _ => StaticValues.ChatMessageRoles.User
+            },
+            m.Content
+        )));
+
+        var chatRequest = new ChatCompletionCreateRequest
+        {
+            Messages = chatMessages,
+            Model = OpenAI.ObjectModels.Models.Gpt_4
+        };
+
+        var response = await _openAIService.ChatCompletion.CreateCompletion(chatRequest);
+        if (response.Successful)
+        {
+            return response.Choices.First().Message.Content ?? string.Empty;
+        }
+
+        throw new Exception($"Failed to get chat completion: {response.Error?.Message}");
+    }
+
+    public async Task<CategoryAssignment> AssignCategoryToTransaction(string description)
+    {
+        var messages = new List<ChatMessage>
+        {
+            new(StaticValues.ChatMessageRoles.System, CategoryAssignmentPrompt.Prompt),
+            new(StaticValues.ChatMessageRoles.User, description)
+        };
+
+        var chatRequest = new ChatCompletionCreateRequest
+        {
+            Messages = messages,
+            Model = OpenAI.ObjectModels.Models.Gpt_4
+        };
+
+        var response = await _openAIService.ChatCompletion.CreateCompletion(chatRequest);
+        if (response.Successful)
+        {
+            var content = response.Choices.First().Message.Content;
+            if (string.IsNullOrEmpty(content))
+            {
+                throw new Exception("Empty response from OpenAI");
+            }
+
+            try
+            {
+                // Try to parse the response as JSON
+                var result = JsonSerializer.Deserialize<CategoryAssignment>(content);
+                if (result == null)
+                {
+                    throw new Exception("Failed to deserialize category assignment");
+                }
+                return result;
+            }
+            catch (JsonException)
+            {
+                // If JSON parsing fails, try to extract category from text
+                var lines = content.Split('\n');
+                var categoryLine = lines.FirstOrDefault(l => l.Contains("category") || l.Contains("Category"));
+                if (categoryLine != null)
+                {
+                    var category = categoryLine.Split(':').Last().Trim().Trim('"', '\'', ' ', ',', '}');
+                    return new CategoryAssignment
+                    {
+                        _thoughts = "Category extracted from text response",
+                        category = category
+                    };
+                }
+                throw new Exception("Could not extract category from response");
+            }
+        }
+
+        throw new Exception($"Failed to get category assignment: {response.Error?.Message}");
+    }
+}
+
+public class CategoryAssignment
+{
+    public string _thoughts { get; set; } = string.Empty;
+    public string category { get; set; } = string.Empty;
+}
+
+// ==============================================
+// Frontend Types
+// ==============================================
+
+// Transaction.ts
+export interface Transaction {
+  transactionDate: string;
+  operationDescription: string;
+  account: string;
+  category: string;
+  amount: string;
+  assignedCategory?: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+// ==============================================
+// Frontend Services
+// ==============================================
+
+// api.ts
+import axios from 'axios';
+import type { ChatMessage, Transaction } from '../types/Transaction';
+
+const API_URL = 'http://localhost:5116/api/Finance';
+
+export const api = {
+  async sendMessage(messages: ChatMessage[]) {
+    const response = await axios.post(`${API_URL}/chat`, { messages });
+    return response.data;
+  },
+
+  async uploadTransactions(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post(`${API_URL}/transactions/upload`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data as { transactions: Transaction[], uncategorizedTransactions: Transaction[] };
+  },
+
+  async assignCategory(transaction: Transaction, userInput: string) {
+    const response = await axios.post(`${API_URL}/transactions/assign-category`, {
+      transactionDate: transaction.transactionDate,
+      operationDescription: transaction.operationDescription,
+      userInput
+    });
+    return response.data as { transaction: Transaction, category: string };
+  },
+
+  async getTransactions() {
+    const response = await axios.get(`${API_URL}/transactions`);
+    return response.data as Transaction[];
+  },
+
+  async assignTransactions() {
+    const response = await axios.post(`${API_URL}/transactions/assign`);
+    return response.data;
+  }
+};
+
+// ==============================================
+// Frontend Components
+// ==============================================
+
+// CategoryAssignmentDialog.tsx
+import React, { useState, useEffect } from "react";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  Box,
+  TextField,
+  Grid,
+  Alert,
+  Paper,
+  CircularProgress,
+} from "@mui/material";
+import type { Transaction } from "../types/Transaction";
+import axios from "axios";
+
+// Configure axios base URL
+axios.defaults.baseURL = "http://localhost:5116";
+
+const CATEGORIES = [
+  "Basic Outcomes",
+  "Financial Freedom",
+  "Emergency Fund",
+  "Education",
+  "Kids Education",
+  "Pleasures",
+] as const;
+
+type Category = (typeof CATEGORIES)[number];
+
+interface CategoryAssignmentDialogProps {
+  open: boolean;
+  transaction: Transaction | null;
+  onClose: () => void;
+  onAssign: (category: string) => void;
+}
+
+export const CategoryAssignmentDialog: React.FC<CategoryAssignmentDialogProps> = ({
+  open,
+  transaction,
+  onClose,
+  onAssign,
+}) => {
+  const [selectedCategories, setSelectedCategories] = useState<Category[]>([]);
+  const [amounts, setAmounts] = useState<{ [key: string]: number }>({});
+  const [error, setError] = useState<string>("");
+  const [chatMessage, setChatMessage] = useState<string>("");
+  const [chatResponse, setChatResponse] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (transaction) {
+      // Reset state when transaction changes
+      setSelectedCategories([]);
+      setAmounts({});
+      setError("");
+
+      // If there's an existing assigned category, parse it and set up the form
+      if (transaction.assignedCategory) {
+        const categoryEntries = transaction.assignedCategory.split(", ");
+        const newCategories: Category[] = [];
+        const newAmounts: { [key: string]: number } = {};
+
+        categoryEntries.forEach((entry) => {
+          const [category, amountStr] = entry.split(": ");
+          if (CATEGORIES.includes(category as Category)) {
+            newCategories.push(category as Category);
+            newAmounts[category] = parseFloat(amountStr);
+          }
+        });
+
+        setSelectedCategories(newCategories);
+        setAmounts(newAmounts);
+      }
+    }
+  }, [transaction]);
+
+  const handleCategoryClick = (category: Category) => {
+    if (!transaction) return;
+
+    const transactionAmount = parseFloat(transaction.amount);
+    const newSelectedCategories = selectedCategories.includes(category)
+      ? selectedCategories.filter((c) => c !== category)
+      : [...selectedCategories, category];
+
+    // Calculate new amounts
+    const newAmounts = { ...amounts };
+    const numSelected = newSelectedCategories.length;
+
+    if (numSelected > 0) {
+      const amountPerCategory = transactionAmount / numSelected;
+      newSelectedCategories.forEach((cat) => {
+        newAmounts[cat] = amountPerCategory;
+      });
+    }
+
+    setSelectedCategories(newSelectedCategories);
+    setAmounts(newAmounts);
+    validateAmounts(newAmounts, transactionAmount);
+  };
+
+  const handleAmountChange = (category: string, value: string) => {
+    if (!transaction) return;
+
+    const newAmounts = { ...amounts };
+    newAmounts[category] = parseFloat(value) || 0;
+    setAmounts(newAmounts);
+    validateAmounts(newAmounts, parseFloat(transaction.amount));
+  };
+
+  const validateAmounts = (
+    currentAmounts: { [key: string]: number },
+    totalAmount: number
+  ) => {
+    const sum = Object.values(currentAmounts).reduce((a, b) => a + b, 0);
+    const difference = Math.abs(sum - totalAmount);
+
+    if (difference > 0.01) {
+      // Using 0.01 to account for floating point precision
+      setError(
+        `Sum of amounts (${sum.toFixed(
+          2
+        )}) must equal transaction amount (${totalAmount.toFixed(2)})`
+      );
+    } else {
+      setError("");
+    }
+  };
+
+  const handleConfirm = () => {
+    if (!transaction || error) return;
+
+    const categoryString = Object.entries(amounts)
+      .map(([category, amount]) => `${category}: ${amount.toFixed(2)}`)
+      .join(", ");
+
+    onAssign(categoryString);
+  };
+
+  const handleChatSubmit = async () => {
+    if (!chatMessage.trim()) return;
+
+    setIsLoading(true);
+    try {
+      const response = await axios.post(
+        "/api/Finance/transactions/category-chat",
+        {
+          message: chatMessage,
+        }
+      );
+      setChatResponse(response.data.response);
+    } catch (error) {
+      setError("Failed to get chat response");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!transaction) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Assign Categories</DialogTitle>
+      <DialogContent>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Transaction Details:
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Date: {transaction.transactionDate}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Description: {transaction.operationDescription}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Amount: {transaction.amount}
+          </Typography>
+          {transaction.assignedCategory && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Current Assignment: {transaction.assignedCategory}
+            </Typography>
+          )}
+        </Box>
+
+        <Paper sx={{ p: 2, mb: 3, backgroundColor: "#f5f5f5" }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Need help categorizing? Chat with AI assistant:
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+            <TextField
+              fullWidth
+              size="small"
+              value={chatMessage}
+              onChange={(e) => setChatMessage(e.target.value)}
+              placeholder="Ask for help with categorization..."
+              onKeyPress={(e) => e.key === "Enter" && handleChatSubmit()}
+            />
+            <Button
+              variant="contained"
+              onClick={handleChatSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? <CircularProgress size={24} /> : "Send"}
+            </Button>
+          </Box>
+          {chatResponse && (
+            <Paper sx={{ p: 2, backgroundColor: "white" }}>
+              <Typography variant="body2">{chatResponse}</Typography>
+            </Paper>
+          )}
+        </Paper>
+
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          {CATEGORIES.map((category) => (
+            <Grid item xs={12} sm={6} key={category} {...({} as any)}>
+              <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                <Button
+                  variant={
+                    selectedCategories.includes(category as Category)
+                      ? "contained"
+                      : "outlined"
+                  }
+                  onClick={() => handleCategoryClick(category as Category)}
+                  fullWidth
+                >
+                  {category}
+                </Button>
+                {selectedCategories.includes(category as Category) && (
+                  <TextField
+                    type="number"
+                    value={amounts[category] || ""}
+                    onChange={(e) =>
+                      handleAmountChange(category, e.target.value)
+                    }
+                    size="small"
+                    sx={{ width: "120px" }}
+                    InputProps={{
+                      inputProps: { step: "0.01" },
+                    }}
+                  />
+                )}
+              </Box>
+            </Grid>
+          ))}
+        </Grid>
+
+        {error && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          onClick={handleConfirm}
+          variant="contained"
+          disabled={!!error || selectedCategories.length === 0}
+        >
+          Confirm
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// ==============================================
+// Frontend Styles
+// ==============================================
+
+// App.css
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+// index.css
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+// ==============================================
+// Frontend Entry Points
+// ==============================================
+
+// main.tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+// App.tsx
+import { useState, useEffect } from "react";
+import {
+  Container,
+  Box,
+  TextField,
+  Button,
+  Paper,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  CircularProgress,
+  Alert,
+  useTheme,
+  alpha,
+  ThemeProvider,
+  createTheme,
+} from "@mui/material";
+import { api } from "./services/api";
+import type { Transaction, ChatMessage } from "./types/Transaction";
+import { CategoryAssignmentDialog } from "./components/CategoryAssignmentDialog";
+
+// Create a light theme
+const lightTheme = createTheme({
+  palette: {
+    mode: "light",
+    primary: {
+      main: "#2196f3",
+      light: "#64b5f6",
+      dark: "#1976d2",
+    },
+    secondary: {
+      main: "#4caf50",
+      light: "#81c784",
+      dark: "#388e3c",
+    },
+    background: {
+      default: "#f5f5f5",
+      paper: "#ffffff",
+    },
+  },
+  typography: {
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+  },
+  components: {
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: "none",
+        },
+      },
+    },
+  },
+});
+
+function App() {
+  const theme = useTheme();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    // Load transactions from localStorage on initial render
+    const savedTransactions = localStorage.getItem("transactions");
+    return savedTransactions ? JSON.parse(savedTransactions) : [];
+  });
+  const [loading, setLoading] = useState(false);
+  const [uncategorizedTransactions, setUncategorizedTransactions] = useState<
+    Transaction[]
+  >([]);
+  const [currentUncategorizedIndex, setCurrentUncategorizedIndex] = useState(0);
+  const [showCategoryDialog, setShowCategoryDialog] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<Transaction | null>(null);
+
+  // Save transactions to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem("transactions", JSON.stringify(transactions));
+  }, [transactions]);
+
+  useEffect(() => {
+    loadTransactions();
+  }, []);
+
+  const loadTransactions = async () => {
+    try {
+      const data = await api.getTransactions();
+      if (data && data.length > 0) {
+        setTransactions(data);
+      }
+    } catch (error) {
+      console.error("Error loading transactions:", error);
+    }
+  };
+
+  const handleFileUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setLoading(true);
+      const response = await api.uploadTransactions(file);
+      if (Array.isArray(response)) {
+        setTransactions(response);
+        console.log("Transactions after upload:", response);
+      } else {
+        console.error("Invalid response format:", response);
+      }
+    } catch (error) {
+      console.error("Error uploading file:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAssignByUser = (transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    setShowCategoryDialog(true);
+  };
+
+  const handleCategoryAssign = async (categoryString: string) => {
+    if (!selectedTransaction) return;
+
+    try {
+      const response = await api.assignCategory(
+        selectedTransaction,
+        categoryString
+      );
+
+      // Update the transaction in the main list with the new assignedCategory
+      setTransactions((prevTransactions) =>
+        prevTransactions.map((t) =>
+          t.transactionDate === response.transaction.transactionDate &&
+          t.operationDescription === response.transaction.operationDescription
+            ? { ...response.transaction, assignedCategory: categoryString }
+            : t
+        )
+      );
+
+      setShowCategoryDialog(false);
+      setSelectedTransaction(null);
+    } catch (error) {
+      console.error("Error assigning category:", error);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim()) return;
+
+    const newMessage: ChatMessage = { role: "user", content: inputMessage };
+    setMessages((prev) => [...prev, newMessage]);
+    setInputMessage("");
+
+    try {
+      const response = await api.sendMessage([...messages, newMessage]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: response.content },
+      ]);
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+  };
+
+  const handleAssignTransactions = async () => {
+    try {
+      await api.assignTransactions();
+      // Optionally reload transactions to reflect new assignments
+      await loadTransactions();
+      // Optionally show a notification
+      alert("Transactions assigned successfully!");
+    } catch (error) {
+      alert("Failed to assign transactions.");
+      console.error(error);
+    }
+  };
+
+  return (
+    <ThemeProvider theme={lightTheme}>
+      <Box
+        sx={{
+          minHeight: "100vh",
+          minWidth: "100vw",
+          backgroundColor: lightTheme.palette.background.default,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Paper
+          elevation={3}
+          sx={{
+            width: "100%",
+            maxWidth: 800,
+            mx: "auto",
+            mb: 4,
+            p: 4,
+            borderRadius: 4,
+            boxShadow: 4,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
+            backgroundColor: lightTheme.palette.background.paper,
+          }}
+        >
+          <Typography
+            variant="h4"
+            component="h1"
+            sx={{
+              color: lightTheme.palette.primary.main,
+              fontWeight: "bold",
+              textAlign: "center",
+              mb: 2,
+            }}
+          >
+            Financial Chat Assistant
+          </Typography>
+
+          <Box
+            sx={{
+              width: "100%",
+              display: "flex",
+              justifyContent: "center",
+              mb: 2,
+              "& .MuiButton-root": {
+                px: 4,
+                py: 1.5,
+                fontSize: "1.1rem",
+                borderRadius: 2,
+                boxShadow: 2,
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  transition: "transform 0.2s",
+                },
+              },
+            }}
+          >
+            <input
+              accept=".csv"
+              style={{ display: "none" }}
+              id="raised-button-file"
+              type="file"
+              onChange={handleFileUpload}
+            />
+            <label htmlFor="raised-button-file">
+              <Button
+                variant="contained"
+                component="span"
+                disabled={loading}
+                color="primary"
+              >
+                {loading ? (
+                  <CircularProgress size={24} />
+                ) : (
+                  "Upload Transactions CSV"
+                )}
+              </Button>
+            </label>
+          </Box>
+
+          <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={handleAssignTransactions}
+            >
+              Assign Transactions
+            </Button>
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={() => handleAssignByUser(transactions[0])}
+              disabled={!transactions.length}
+            >
+              Assign By User
+            </Button>
+          </Box>
+
+          {uncategorizedTransactions.length > 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {uncategorizedTransactions.length} transactions need category
+              assignment
+            </Alert>
+          )}
+
+          <Box
+            sx={{
+              width: "100%",
+              display: "flex",
+              gap: 2,
+              mb: 2,
+              "& .MuiTextField-root": {
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                  "&:hover fieldset": {
+                    borderColor: lightTheme.palette.primary.main,
+                  },
+                },
+              },
+              "& .MuiButton-root": {
+                borderRadius: 2,
+                px: 4,
+              },
+            }}
+          >
+            <TextField
+              fullWidth
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              placeholder="Ask about your transactions..."
+              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+              variant="outlined"
+            />
+            <Button
+              variant="contained"
+              onClick={handleSendMessage}
+              color="primary"
+            >
+              Send
+            </Button>
+          </Box>
+
+          <Box sx={{ width: "100%" }}>
+            {messages.map((message, index) => (
+              <Paper
+                key={index}
+                elevation={2}
+                sx={{
+                  p: 2,
+                  mb: 2,
+                  borderRadius: 2,
+                  backgroundColor:
+                    message.role === "user"
+                      ? alpha(lightTheme.palette.primary.main, 0.1)
+                      : alpha(lightTheme.palette.secondary.main, 0.1),
+                  border: `1px solid ${
+                    message.role === "user"
+                      ? lightTheme.palette.primary.main
+                      : lightTheme.palette.secondary.main
+                  }`,
+                  "&:hover": {
+                    transform: "translateX(4px)",
+                    transition: "transform 0.2s",
+                  },
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  sx={{
+                    color:
+                      message.role === "user"
+                        ? lightTheme.palette.primary.main
+                        : lightTheme.palette.secondary.main,
+                    fontWeight: 500,
+                  }}
+                >
+                  {message.content}
+                </Typography>
+              </Paper>
+            ))}
+          </Box>
+
+          {transactions && transactions.length > 0 && (
+            <TableContainer
+              component={Paper}
+              sx={{
+                width: "100%",
+                borderRadius: 2,
+                boxShadow: 3,
+                overflowX: "auto",
+                minWidth: 800,
+                "& .MuiTableHead-root": {
+                  backgroundColor: alpha(lightTheme.palette.primary.main, 0.1),
+                  "& .MuiTableCell-head": {
+                    color: lightTheme.palette.primary.main,
+                    fontWeight: "bold",
+                  },
+                },
+                "& .MuiTableRow-root:hover": {
+                  backgroundColor: alpha(lightTheme.palette.primary.main, 0.05),
+                },
+              }}
+            >
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Transaction Date</TableCell>
+                    <TableCell>Operation Description</TableCell>
+                    <TableCell>Account</TableCell>
+                    <TableCell>Category</TableCell>
+                    <TableCell>Assigned Category</TableCell>
+                    <TableCell>Amount</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {transactions.map((transaction, index) => (
+                    <TableRow key={index}>
+                      <TableCell>{transaction.transactionDate}</TableCell>
+                      <TableCell>{transaction.operationDescription}</TableCell>
+                      <TableCell>{transaction.account}</TableCell>
+                      <TableCell>{transaction.category}</TableCell>
+                      <TableCell>{transaction.assignedCategory}</TableCell>
+                      <TableCell>{transaction.amount}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+
+          <CategoryAssignmentDialog
+            open={showCategoryDialog}
+            transaction={selectedTransaction}
+            onClose={() => {
+              setShowCategoryDialog(false);
+              setSelectedTransaction(null);
+            }}
+            onAssign={handleCategoryAssign}
+          />
+        </Paper>
+      </Box>
+    </ThemeProvider>
+  );
+}
+
+export default App; 

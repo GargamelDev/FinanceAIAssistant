@@ -11,9 +11,9 @@ using ChatMessage = OpenAI.ObjectModels.RequestModels.ChatMessage;
 
 namespace FinanceChatApi.Services;
 
-public class OpenAIService
+public class OpenAIService : IOpenAIService
 {
-    private readonly IOpenAIService _openAIService;
+    private readonly OpenAI.Interfaces.IOpenAIService _openAIService;
 
     public OpenAIService(IConfiguration configuration)
     {

@@ -6,7 +6,7 @@ using System.Text;
 
 namespace FinanceChatApi.Services;
 
-public class CsvService
+public class CsvService : ICsvService
 {
     public async Task<List<Transaction>> ParseTransactionsAsync(IFormFile file)
     {
