@@ -1,7 +1,8 @@
 import axios from "axios";
 import type { ChatMessage, Transaction } from "../types/Transaction";
 
-const API_URL = "http://localhost:5116/api/Finance";
+//const API_URL = "http://localhost:5116/api/Finance";
+const API_URL = "https://financeaiassistant-1.onrender.com/api/finance";
 
 export const api = {
   async sendMessage(messages: ChatMessage[]) {
