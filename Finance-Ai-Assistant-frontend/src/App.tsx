@@ -22,6 +22,7 @@ import {
 import { api } from "./services/api";
 import type { Transaction, ChatMessage } from "./types/Transaction";
 import { CategoryAssignmentDialog } from "./components/CategoryAssignmentDialog";
+import { Analytics } from "@vercel/analytics/react";
 
 // Create a light theme
 const lightTheme = createTheme({
@@ -197,251 +198,262 @@ function App() {
   };
 
   return (
-    <ThemeProvider theme={lightTheme}>
-      <Box
-        sx={{
-          minHeight: "100vh",
-          minWidth: "100vw",
-          backgroundColor: lightTheme.palette.background.default,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Paper
-          elevation={3}
+    <>
+      <ThemeProvider theme={lightTheme}>
+        <Box
           sx={{
-            width: "100%",
-            maxWidth: 800,
-            mx: "auto",
-            mb: 4,
-            p: 4,
-            borderRadius: 4,
-            boxShadow: 4,
+            minHeight: "100vh",
+            minWidth: "100vw",
+            backgroundColor: lightTheme.palette.background.default,
             display: "flex",
-            flexDirection: "column",
+            justifyContent: "center",
             alignItems: "center",
-            gap: 4,
-            backgroundColor: lightTheme.palette.background.paper,
           }}
         >
-          <Typography
-            variant="h4"
-            component="h1"
-            sx={{
-              color: lightTheme.palette.primary.main,
-              fontWeight: "bold",
-              textAlign: "center",
-              mb: 2,
-            }}
-          >
-            Financial Chat Assistant
-          </Typography>
-
-          <Box
+          <Paper
+            elevation={3}
             sx={{
               width: "100%",
+              maxWidth: 800,
+              mx: "auto",
+              mb: 4,
+              p: 4,
+              borderRadius: 4,
+              boxShadow: 4,
               display: "flex",
-              justifyContent: "center",
-              mb: 2,
-              "& .MuiButton-root": {
-                px: 4,
-                py: 1.5,
-                fontSize: "1.1rem",
-                borderRadius: 2,
-                boxShadow: 2,
-                "&:hover": {
-                  transform: "translateY(-2px)",
-                  transition: "transform 0.2s",
-                },
-              },
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 4,
+              backgroundColor: lightTheme.palette.background.paper,
             }}
           >
-            <input
-              accept=".csv"
-              style={{ display: "none" }}
-              id="raised-button-file"
-              type="file"
-              onChange={handleFileUpload}
-            />
-            <label htmlFor="raised-button-file">
-              <Button
-                variant="contained"
-                component="span"
-                disabled={loading}
-                color="primary"
-              >
-                {loading ? (
-                  <CircularProgress size={24} />
-                ) : (
-                  "Upload Transactions CSV"
-                )}
-              </Button>
-            </label>
-          </Box>
-
-          <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
-            <Button
-              variant="outlined"
-              color="secondary"
-              onClick={handleAssignTransactions}
+            <Typography
+              variant="h4"
+              component="h1"
+              sx={{
+                color: lightTheme.palette.primary.main,
+                fontWeight: "bold",
+                textAlign: "center",
+                mb: 2,
+              }}
             >
-              Assign Transactions
-            </Button>
-            <Button
-              variant="outlined"
-              color="primary"
-              onClick={() => handleAssignByUser(transactions[0])}
-              disabled={!transactions.length}
-            >
-              Assign By User
-            </Button>
-          </Box>
+              Financial Chat Assistant
+            </Typography>
 
-          {uncategorizedTransactions.length > 0 && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              {uncategorizedTransactions.length} transactions need category
-              assignment
-            </Alert>
-          )}
-
-          <Box
-            sx={{
-              width: "100%",
-              display: "flex",
-              gap: 2,
-              mb: 2,
-              "& .MuiTextField-root": {
-                "& .MuiOutlinedInput-root": {
-                  borderRadius: 2,
-                  "&:hover fieldset": {
-                    borderColor: lightTheme.palette.primary.main,
-                  },
-                },
-              },
-              "& .MuiButton-root": {
-                borderRadius: 2,
-                px: 4,
-              },
-            }}
-          >
-            <TextField
-              fullWidth
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              placeholder="Ask about your transactions..."
-              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-              variant="outlined"
-            />
-            <Button
-              variant="contained"
-              onClick={handleSendMessage}
-              color="primary"
-            >
-              Send
-            </Button>
-          </Box>
-
-          <Box sx={{ width: "100%" }}>
-            {messages.map((message, index) => (
-              <Paper
-                key={index}
-                elevation={2}
-                sx={{
-                  p: 2,
-                  mb: 2,
-                  borderRadius: 2,
-                  backgroundColor:
-                    message.role === "user"
-                      ? alpha(lightTheme.palette.primary.main, 0.1)
-                      : alpha(lightTheme.palette.secondary.main, 0.1),
-                  border: `1px solid ${
-                    message.role === "user"
-                      ? lightTheme.palette.primary.main
-                      : lightTheme.palette.secondary.main
-                  }`,
-                  "&:hover": {
-                    transform: "translateX(4px)",
-                    transition: "transform 0.2s",
-                  },
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{
-                    color:
-                      message.role === "user"
-                        ? lightTheme.palette.primary.main
-                        : lightTheme.palette.secondary.main,
-                    fontWeight: 500,
-                  }}
-                >
-                  {message.content}
-                </Typography>
-              </Paper>
-            ))}
-          </Box>
-
-          {transactions && transactions.length > 0 && (
-            <TableContainer
-              component={Paper}
+            <Box
               sx={{
                 width: "100%",
-                borderRadius: 2,
-                boxShadow: 3,
-                overflowX: "auto",
-                minWidth: 800,
-                "& .MuiTableHead-root": {
-                  backgroundColor: alpha(lightTheme.palette.primary.main, 0.1),
-                  "& .MuiTableCell-head": {
-                    color: lightTheme.palette.primary.main,
-                    fontWeight: "bold",
+                display: "flex",
+                justifyContent: "center",
+                mb: 2,
+                "& .MuiButton-root": {
+                  px: 4,
+                  py: 1.5,
+                  fontSize: "1.1rem",
+                  borderRadius: 2,
+                  boxShadow: 2,
+                  "&:hover": {
+                    transform: "translateY(-2px)",
+                    transition: "transform 0.2s",
                   },
-                },
-                "& .MuiTableRow-root:hover": {
-                  backgroundColor: alpha(lightTheme.palette.primary.main, 0.05),
                 },
               }}
             >
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Transaction Date</TableCell>
-                    <TableCell>Operation Description</TableCell>
-                    <TableCell>Account</TableCell>
-                    <TableCell>Category</TableCell>
-                    <TableCell>Assigned Category</TableCell>
-                    <TableCell>Amount</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {transactions.map((transaction, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{transaction.transactionDate}</TableCell>
-                      <TableCell>{transaction.operationDescription}</TableCell>
-                      <TableCell>{transaction.account}</TableCell>
-                      <TableCell>{transaction.category}</TableCell>
-                      <TableCell>{transaction.assignedCategory}</TableCell>
-                      <TableCell>{transaction.amount}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
+              <input
+                accept=".csv"
+                style={{ display: "none" }}
+                id="raised-button-file"
+                type="file"
+                onChange={handleFileUpload}
+              />
+              <label htmlFor="raised-button-file">
+                <Button
+                  variant="contained"
+                  component="span"
+                  disabled={loading}
+                  color="primary"
+                >
+                  {loading ? (
+                    <CircularProgress size={24} />
+                  ) : (
+                    "Upload Transactions CSV"
+                  )}
+                </Button>
+              </label>
+            </Box>
 
-          <CategoryAssignmentDialog
-            open={showCategoryDialog}
-            transaction={selectedTransaction}
-            onClose={() => {
-              setShowCategoryDialog(false);
-              setSelectedTransaction(null);
-            }}
-            onAssign={handleCategoryAssign}
-          />
-        </Paper>
-      </Box>
-    </ThemeProvider>
+            <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+              <Button
+                variant="outlined"
+                color="secondary"
+                onClick={handleAssignTransactions}
+              >
+                Assign Transactions
+              </Button>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => handleAssignByUser(transactions[0])}
+                disabled={!transactions.length}
+              >
+                Assign By User
+              </Button>
+            </Box>
+
+            {uncategorizedTransactions.length > 0 && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {uncategorizedTransactions.length} transactions need category
+                assignment
+              </Alert>
+            )}
+
+            <Box
+              sx={{
+                width: "100%",
+                display: "flex",
+                gap: 2,
+                mb: 2,
+                "& .MuiTextField-root": {
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                    "&:hover fieldset": {
+                      borderColor: lightTheme.palette.primary.main,
+                    },
+                  },
+                },
+                "& .MuiButton-root": {
+                  borderRadius: 2,
+                  px: 4,
+                },
+              }}
+            >
+              <TextField
+                fullWidth
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                placeholder="Ask about your transactions..."
+                onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                variant="outlined"
+              />
+              <Button
+                variant="contained"
+                onClick={handleSendMessage}
+                color="primary"
+              >
+                Send
+              </Button>
+            </Box>
+
+            <Box sx={{ width: "100%" }}>
+              {messages.map((message, index) => (
+                <Paper
+                  key={index}
+                  elevation={2}
+                  sx={{
+                    p: 2,
+                    mb: 2,
+                    borderRadius: 2,
+                    backgroundColor:
+                      message.role === "user"
+                        ? alpha(lightTheme.palette.primary.main, 0.1)
+                        : alpha(lightTheme.palette.secondary.main, 0.1),
+                    border: `1px solid ${
+                      message.role === "user"
+                        ? lightTheme.palette.primary.main
+                        : lightTheme.palette.secondary.main
+                    }`,
+                    "&:hover": {
+                      transform: "translateX(4px)",
+                      transition: "transform 0.2s",
+                    },
+                  }}
+                >
+                  <Typography
+                    variant="body1"
+                    sx={{
+                      color:
+                        message.role === "user"
+                          ? lightTheme.palette.primary.main
+                          : lightTheme.palette.secondary.main,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {message.content}
+                  </Typography>
+                </Paper>
+              ))}
+            </Box>
+
+            {transactions && transactions.length > 0 && (
+              <TableContainer
+                component={Paper}
+                sx={{
+                  width: "100%",
+                  borderRadius: 2,
+                  boxShadow: 3,
+                  overflowX: "auto",
+                  minWidth: 800,
+                  "& .MuiTableHead-root": {
+                    backgroundColor: alpha(
+                      lightTheme.palette.primary.main,
+                      0.1
+                    ),
+                    "& .MuiTableCell-head": {
+                      color: lightTheme.palette.primary.main,
+                      fontWeight: "bold",
+                    },
+                  },
+                  "& .MuiTableRow-root:hover": {
+                    backgroundColor: alpha(
+                      lightTheme.palette.primary.main,
+                      0.05
+                    ),
+                  },
+                }}
+              >
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Transaction Date</TableCell>
+                      <TableCell>Operation Description</TableCell>
+                      <TableCell>Account</TableCell>
+                      <TableCell>Category</TableCell>
+                      <TableCell>Assigned Category</TableCell>
+                      <TableCell>Amount</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {transactions.map((transaction, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{transaction.transactionDate}</TableCell>
+                        <TableCell>
+                          {transaction.operationDescription}
+                        </TableCell>
+                        <TableCell>{transaction.account}</TableCell>
+                        <TableCell>{transaction.category}</TableCell>
+                        <TableCell>{transaction.assignedCategory}</TableCell>
+                        <TableCell>{transaction.amount}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+
+            <CategoryAssignmentDialog
+              open={showCategoryDialog}
+              transaction={selectedTransaction}
+              onClose={() => {
+                setShowCategoryDialog(false);
+                setSelectedTransaction(null);
+              }}
+              onAssign={handleCategoryAssign}
+            />
+          </Paper>
+        </Box>
+      </ThemeProvider>
+      <Analytics />
+    </>
   );
 }
 

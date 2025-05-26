@@ -1,38 +1,79 @@
 import axios from "axios";
+import { track } from "@vercel/analytics";
 import type { ChatMessage, Transaction } from "../types/Transaction";
 
 //const API_URL = "http://localhost:5116/api/Finance";
 const API_URL = "https://financeaiassistant-1.onrender.com/api/finance";
 
-// Add axios interceptors for logging
+// Enhanced logging for Vercel Analytics
+const log = {
+  info: (message: string, data?: any) => {
+    console.log(
+      `[INFO] ${new Date().toISOString()} - ${message}`,
+      data ? JSON.stringify(data, null, 2) : ""
+    );
+    // Track events in Vercel Analytics
+    track("api_info", { message, ...data });
+  },
+  error: (message: string, error?: any) => {
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`, error);
+    // Track errors in Vercel Analytics
+    track("api_error", { message, error: error?.message || "Unknown error" });
+  },
+  request: (method: string, url: string, data?: any) => {
+    console.log(
+      `[REQUEST] ${new Date().toISOString()} - ${method.toUpperCase()} ${url}`
+    );
+    if (data) {
+      console.log(
+        `[REQUEST_DATA]`,
+        typeof data === "object" ? JSON.stringify(data, null, 2) : data
+      );
+    }
+    track("api_request", { method: method.toUpperCase(), url });
+  },
+  response: (method: string, url: string, status: number, data?: any) => {
+    console.log(
+      `[RESPONSE] ${new Date().toISOString()} - ${method.toUpperCase()} ${url} - Status: ${status}`
+    );
+    if (data) {
+      console.log(
+        `[RESPONSE_DATA]`,
+        typeof data === "object" ? JSON.stringify(data, null, 2) : data
+      );
+    }
+    track("api_response", { method: method.toUpperCase(), url, status });
+  },
+};
+
+// Add axios interceptors for enhanced logging
 axios.interceptors.request.use(
   (config) => {
-    console.log(
-      `🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`
+    log.request(
+      config.method || "UNKNOWN",
+      config.url || "UNKNOWN",
+      config.data
     );
-    console.log("Request headers:", config.headers);
-    console.log("Request data:", config.data);
     return config;
   },
   (error) => {
-    console.error("❌ Request Error:", error);
+    log.error("Request interceptor error", error);
     return Promise.reject(error);
   }
 );
 
 axios.interceptors.response.use(
   (response) => {
-    console.log(
-      `✅ API Response: ${response.config.method?.toUpperCase()} ${
-        response.config.url
-      }`
+    log.response(
+      response.config.method || "UNKNOWN",
+      response.config.url || "UNKNOWN",
+      response.status,
+      response.data
     );
-    console.log("Response status:", response.status);
-    console.log("Response data:", response.data);
     return response;
   },
   (error) => {
-    console.error("❌ Response Error:", {
+    log.error("API Response Error", {
       url: error.config?.url,
       method: error.config?.method,
       status: error.response?.status,
@@ -47,24 +88,23 @@ axios.interceptors.response.use(
 export const api = {
   async sendMessage(messages: ChatMessage[]) {
     try {
-      console.log("📤 Sending chat message...");
+      log.info("Sending chat message", { messageCount: messages.length });
       const response = await axios.post(`${API_URL}/chat`, { messages });
-      console.log("📥 Chat response received:", response.data);
+      log.info("Chat response received successfully");
       return response.data;
     } catch (error) {
-      console.error("💥 sendMessage failed:", error);
+      log.error("sendMessage failed", error);
       throw error;
     }
   },
 
   async uploadTransactions(file: File) {
     try {
-      console.log(
-        "📤 Uploading transactions file:",
-        file.name,
-        "Size:",
-        file.size
-      );
+      log.info("Uploading transactions file", {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+      });
       const formData = new FormData();
       formData.append("file", file);
       const response = await axios.post(
@@ -76,23 +116,27 @@ export const api = {
           },
         }
       );
-      console.log("📥 Upload response received:", response.data);
+      log.info("Upload response received successfully", {
+        transactionCount: response.data?.transactions?.length || 0,
+        uncategorizedCount:
+          response.data?.uncategorizedTransactions?.length || 0,
+      });
       return response.data as {
         transactions: Transaction[];
         uncategorizedTransactions: Transaction[];
       };
     } catch (error) {
-      console.error("💥 uploadTransactions failed:", error);
+      log.error("uploadTransactions failed", error);
       throw error;
     }
   },
 
   async assignCategory(transaction: Transaction, userInput: string) {
     try {
-      console.log(
-        "📤 Assigning category for transaction:",
-        transaction.operationDescription
-      );
+      log.info("Assigning category for transaction", {
+        description: transaction.operationDescription,
+        userInput: userInput,
+      });
       const response = await axios.post(
         `${API_URL}/transactions/assign-category`,
         {
@@ -101,38 +145,38 @@ export const api = {
           userInput,
         }
       );
-      console.log("📥 Category assignment response:", response.data);
+      log.info("Category assignment response received", {
+        category: response.data?.category,
+      });
       return response.data as { transaction: Transaction; category: string };
     } catch (error) {
-      console.error("💥 assignCategory failed:", error);
+      log.error("assignCategory failed", error);
       throw error;
     }
   },
 
   async getTransactions() {
     try {
-      console.log("📤 Getting transactions...");
+      log.info("Getting transactions");
       const response = await axios.get(`${API_URL}/transactions`);
-      console.log(
-        "📥 Transactions received:",
-        response.data?.length,
-        "transactions"
-      );
+      log.info("Transactions received successfully", {
+        count: response.data?.length || 0,
+      });
       return response.data as Transaction[];
     } catch (error) {
-      console.error("💥 getTransactions failed:", error);
+      log.error("getTransactions failed", error);
       throw error;
     }
   },
 
   async assignTransactions() {
     try {
-      console.log("📤 Auto-assigning transactions...");
+      log.info("Auto-assigning transactions");
       const response = await axios.post(`${API_URL}/transactions/assign`);
-      console.log("📥 Auto-assignment completed:", response.data);
+      log.info("Auto-assignment completed successfully");
       return response.data;
     } catch (error) {
-      console.error("💥 assignTransactions failed:", error);
+      log.error("assignTransactions failed", error);
       throw error;
     }
   },
