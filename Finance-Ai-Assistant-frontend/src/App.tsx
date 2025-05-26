@@ -100,17 +100,24 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    console.log("🔄 Starting file upload process...");
     try {
       setLoading(true);
       const response = await api.uploadTransactions(file);
       if (Array.isArray(response)) {
         setTransactions(response);
-        console.log("Transactions after upload:", response);
+        console.log("✅ Transactions updated after upload:", response.length);
       } else {
-        console.error("Invalid response format:", response);
+        console.error("❌ Invalid response format:", response);
+        alert("Error: Invalid response format from server");
       }
     } catch (error) {
-      console.error("Error uploading file:", error);
+      console.error("💥 File upload failed:", error);
+      alert(
+        `Upload failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     } finally {
       setLoading(false);
     }
@@ -154,27 +161,38 @@ function App() {
     setMessages((prev) => [...prev, newMessage]);
     setInputMessage("");
 
+    console.log("🔄 Sending chat message...");
     try {
       const response = await api.sendMessage([...messages, newMessage]);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: response.content },
       ]);
+      console.log("✅ Chat message sent successfully");
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.error("💥 Chat message failed:", error);
+      alert(
+        `Chat failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 
   const handleAssignTransactions = async () => {
+    console.log("🔄 Starting auto-assignment...");
     try {
       await api.assignTransactions();
-      // Optionally reload transactions to reflect new assignments
       await loadTransactions();
-      // Optionally show a notification
       alert("Transactions assigned successfully!");
+      console.log("✅ Auto-assignment completed");
     } catch (error) {
-      alert("Failed to assign transactions.");
-      console.error(error);
+      console.error("💥 Auto-assignment failed:", error);
+      alert(
+        `Failed to assign transactions: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 

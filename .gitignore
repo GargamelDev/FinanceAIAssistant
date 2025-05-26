@@ -98,4 +98,9 @@ launchSettings.json
 
 # API Keys and Secrets
 **/appsettings.Development.json
-**/appsettings.Production.json 
+**/appsettings.Production.json
+
+# Configuration files with sensitive data
+FinanceChatApi/appsettings.json
+
+WorkTrack 
